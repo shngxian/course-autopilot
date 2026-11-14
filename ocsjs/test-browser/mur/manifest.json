@@ -1,0 +1,17 @@
+{
+	"manifest_version": 3,
+	"name": "MUR - Mini Userscript Runtime",
+	"version": "2.1.0",
+	"description": "轻量用户脚本运行时（GM API 桥接 + 单脚本一体化注册），兼容 Chrome 137+",
+	"permissions": ["storage", "unlimitedStorage", "userScripts", "tabs"],
+	"host_permissions": ["<all_urls>"],
+	"content_scripts": [
+		{
+			"matches": ["<all_urls>"],
+			"js": ["relay.js"],
+			"run_at": "document_start",
+			"all_frames": true
+		}
+	],
+	"background": { "service_worker": "runtime4.js" }
+}
