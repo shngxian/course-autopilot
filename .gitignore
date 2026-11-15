@@ -18,3 +18,8 @@ ZCode体验报告-*.md
 # 系统垃圾
 .DS_Store
 **/.DS_Store
+
+# 个人部署/场景脚本（仅本地）
+ocsjs/test-browser/push.js
+ocs-desktop/scripts/create-obs-scenes.js
+ocs-desktop/scripts/setup-obs-scenes.js
