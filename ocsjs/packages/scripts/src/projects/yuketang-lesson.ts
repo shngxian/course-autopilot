@@ -1065,9 +1065,25 @@ export function createLessonAnswerScript() {
 				}
 			}, 800);
 
+			/**
+			 * SW 心跳入口：Chrome 会冻结后台窗口的定时器（实测后台挂 10 分钟后
+			 * 轮询停摆、推题整窗错过）。MUR 的 SW 不受页面节流限制，每 10s 通过
+			 * chrome.scripting 注入调用这里暴露的 tick；本页同时每 5s 向 SW 注册
+			 * （storage.session 持久化，SW 重启不丢，见 runtime4.js 心跳段）。
+			 */
+			(window as any).__ocs_ykt_lesson_tick = () => tick();
+			const hbPost = () => {
+				try {
+					window.postMessage({ __mur: 1, m: { t: 'lesson-hb' } }, '*');
+				} catch {}
+			};
+			hbPost();
+			const hbTimer = setInterval(hbPost, 5000);
+
 			window.addEventListener('beforeunload', () => {
 				clearInterval(timer);
 				clearInterval(guardTimer);
+				clearInterval(hbTimer);
 			});
 			log('info', '课堂答题已启动（倒计时兜底：剩余≤5s 无答案则选 C 提交）', { url: location.href });
 		}

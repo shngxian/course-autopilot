@@ -3,7 +3,7 @@
 	"name": "MUR - Mini Userscript Runtime",
 	"version": "2.1.0",
 	"description": "轻量用户脚本运行时（GM API 桥接 + 单脚本一体化注册），兼容 Chrome 137+",
-	"permissions": ["storage", "unlimitedStorage", "userScripts", "tabs"],
+	"permissions": ["storage", "unlimitedStorage", "userScripts", "tabs", "scripting"],
 	"host_permissions": ["<all_urls>"],
 	"content_scripts": [
 		{

@@ -322,3 +322,76 @@ async function install() {
 chrome.runtime.onInstalled.addListener(() => install());
 chrome.runtime.onStartup.addListener(() => install());
 install();
+
+/* ---------------- 课堂页防冻结心跳（2026-11-16） ----------------
+ * Chrome 会把后台窗口的定时器冻结/强节流（Memory Saver + Intensive Throttling），
+ * 11-16 实测：课堂标签页后台挂约 10 分钟后脚本 600ms 轮询完全停摆，
+ * 老师推题整窗错过（P26）。
+ * 本 SW 不受页面节流限制。心跳流程：
+ *   1) 课堂页的用户脚本启动时（及每 5s）发 {t:'lesson-hb'} 注册消息，
+ *      SW 记下 tabId 并写入 storage.session（SW 被杀重启后注册不丢）
+ *   2) SW 每 10s 对已注册标签执行 chrome.scripting.executeScript（MAIN 世界），
+ *      调用用户脚本暴露的 window.__ocs_ykt_lesson_tick（检测→AI→回填→提交主循环）
+ *   3) 注入本身会唤醒冻结的渲染进程；标签页被整页丢弃（discarded）时直接重载回课堂
+ */
+const LESSON_TABS_KEY = 'mur_lesson_tabs';
+const lessonTabs = new Map();
+
+async function loadLessonTabs() {
+	try {
+		const st = await chrome.storage.session.get(LESSON_TABS_KEY);
+		for (const [id, ts] of Object.entries((st && st[LESSON_TABS_KEY]) || {})) {
+			lessonTabs.set(Number(id), ts);
+		}
+	} catch (e) {}
+}
+loadLessonTabs();
+
+async function saveLessonTabs() {
+	try {
+		await chrome.storage.session.set({ [LESSON_TABS_KEY]: Object.fromEntries(lessonTabs) });
+	} catch (e) {}
+}
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+	if (lessonTabs.delete(tabId)) saveLessonTabs();
+});
+
+chrome.runtime.onMessage.addListener((msg, sender) => {
+	if (msg && msg.__mur === 1 && msg.m && msg.m.t === 'lesson-hb') {
+		try {
+			if (sender && sender.tab && typeof sender.tab.id === 'number') {
+				lessonTabs.set(sender.tab.id, Date.now());
+				saveLessonTabs();
+			}
+		} catch (e) {}
+	}
+});
+
+setInterval(async () => {
+	try {
+		if (!lessonTabs.size) return;
+		for (const tabId of Array.from(lessonTabs.keys())) {
+			try {
+				const tab = await chrome.tabs.get(tabId);
+				if (tab.discarded) {
+					chrome.tabs.reload(tabId);
+					continue;
+				}
+				await chrome.scripting.executeScript({
+					target: { tabId: tabId, allFrames: true },
+					world: 'MAIN',
+					func: () => {
+						try {
+							if (typeof window.__ocs_ykt_lesson_tick === 'function') window.__ocs_ykt_lesson_tick();
+						} catch (e) {}
+					}
+				});
+			} catch (e) {
+				// 标签已关/权限不足等：从注册表移除，等页面刷新后重新注册
+				lessonTabs.delete(tabId);
+				saveLessonTabs();
+			}
+		}
+	} catch (e) {}
+}, 10000);
