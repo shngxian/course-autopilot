@@ -196,6 +196,10 @@ function cleanStemText(text: string): string {
 		// 倒计时占位符「--:--」没有数字，上面的规则吃不掉；不解的话
 		// 解锁瞬间占位符变真数字会让 key 变化 → 白白发一次 AI
 		.replace(/[-—–]+[:：][-—–]*/g, '')
+		// 裸倒计时词：占位符剥掉后标题开头常剩「倒计时」三个字（2026-11-16 实测），
+		// 提交后倒计时元素消失、标题变干净 → key 变化 → 同题被重复问 AI。
+		// 只锚定标题开头剥（倒计时容器是 time-box，在容器最前面），不碰题干正文
+		.replace(/^\s*(?:倒计时|剩余时间?|还剩)\s*[:：]?\s*/, '')
 		// 三种前缀统一处理；数字部分是**必选**的（否则"倒计时题"里的"倒计时"会被误删），
 		// mm:ss 放前面优先匹配，不然 \d{1,3} 只吃到 "00" 留下 ":45"
 		.replace(/(?:剩余|倒计时|还剩)\s*[:：]?\s*(?:\d{1,2}:\d{2}|\d{1,3}\s*(?:秒|s)?)/gi, '')
@@ -552,6 +556,30 @@ export function createLessonAnswerScript() {
 			};
 
 			const answerSeparators = ['\n', ',', '，', ';', '；', '、', ' '];
+
+			/**
+			 * 跨标签页租约选主（2026-11-16 实测修复）：
+			 * MUR 在所有雨课堂标签页都注入本脚本，两节课的标签同时开着时
+			 * 会各自检测同一道题 → 并发问 AI → 桥接单标签页争用
+			 * （实测：同题被两标签各问一次，第二问 90s 超时空答案）。
+			 * 用 localStorage 租约（4 秒心跳）选主：只有持租约的实例执行答题；
+			 * 持租约的标签关闭后租约自然过期，其余标签自动接管。
+			 * 注意：租约竞争必须在 detect() 之后——课程列表页也会跑本脚本
+			 * （matches 全站），它们 detect 为 null 永远不抢租约，不会挡住真题页。
+			 */
+			const LEASE_KEY = 'ocs_ykt_lesson_lease';
+			const TAB_ID = Math.random().toString(36).slice(2);
+			const leaseHold = (): boolean => {
+				try {
+					const now = Date.now();
+					const raw = JSON.parse(localStorage.getItem(LEASE_KEY) || 'null');
+					if (raw && raw.tab !== TAB_ID && now - raw.ts < 4000) return false; // 别的标签在任
+					localStorage.setItem(LEASE_KEY, JSON.stringify({ tab: TAB_ID, ts: now }));
+					return true;
+				} catch {
+					return true;
+				}
+			};
 
 			/** 选项是否只是裸字母（A/B/C/D）——内容全在图上的雨课堂课堂题就是这种形态 */
 			const letterOnly = (texts: string[]) => texts.length >= 2 && texts.every((t) => /^[A-Za-z]{1,2}$/.test(t.trim()));
@@ -986,6 +1014,8 @@ export function createLessonAnswerScript() {
 				if (!p || ctx.done.has(p.key)) return;
 				// 已预答但还没解锁：直接跳过（否则每 600ms 重复记一次「发现题目」，日志会被刷满）
 				if (!p.submitBtn && ctx.preAnswered.has(p.key)) return;
+				// 跨标签页选主：本标签不是租约持有者就不答题（防同题双实例并发问 AI）
+				if (!leaseHold()) return;
 
 				// 一旦真的检测到题目，就把面板置顶（不管当前是什么页面）
 				if (!ctx.pinned) {
@@ -1022,6 +1052,8 @@ export function createLessonAnswerScript() {
 				try {
 					const p = detect();
 					if (!p || !p.submitBtn) return; // 还没解锁，不用兜底
+					// 兜底也要选主：非租约持有者的标签不抢提交（防双实例各点一次）
+					if (!leaseHold()) return;
 					if (ctx.done.has(p.key) || ctx.aborted.has(p.key)) return;
 					const remain = readRemainSeconds(p.root);
 					if (remain === null || remain > 5) return;
